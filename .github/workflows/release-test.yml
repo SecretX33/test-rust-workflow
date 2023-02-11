@@ -1,0 +1,105 @@
+name: Release Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      BUILD_MODE:
+        description: Build mode
+        default: build and release
+        type: choice
+        options:
+          - build and release
+          - build and release (force)
+          - build only
+        required: true
+      VERSION_TAG:
+        description: Custom name of version (e.g. 1.2.5, empty to use the one defined in cargo.toml)
+        type: string
+        required: false
+
+env:
+  CARGO_REGISTRY: https://github.com/rust-lang/crates.io-index
+  CARGO_TARGET_DIR: target
+  CARGO_TERM_COLOR: always
+
+jobs:
+  create-dummy-file:
+    runs-on: ubuntu-latest
+    name: Create dummy release file
+    steps:
+      - name: Create file
+        run: |
+          mkdir -p build
+          touch build/binary-file.txt
+          echo "Hellooooo ;)" > build/binary-file.txt
+          cat build/binary-file.txt
+
+      - name: Zip binary
+        run: |
+          echo "=== Zipping binary ==="
+          zip build/binary-file.zip build/binary-file.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: binary-file
+          path: build/binary-file.zip
+          if-no-files-found: error
+
+  release:
+    runs-on: ubuntu-latest
+    name: Release
+    needs:
+      - create-dummy-file
+    permissions:
+      contents: write
+    if: inputs.BUILD_MODE == 'build and release' || inputs.BUILD_MODE == 'build and release (force)'
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: dist
+
+      - name: Move artifacts
+        run: |
+          for zip in dist/*/*.zip; do mv $zip dist/; done
+          find dist -type f -empty -print -delete -o -type d -empty -print -delete
+
+      - name: List dist folder contents
+        run: |
+          echo GitHub ref is: ${{ github.ref }}
+          echo === Current folder ===
+          pwd
+          echo === Root folder contents ===
+          ls -la
+          echo === Dist folder contents ===
+          ls -la dist
+
+      - name: Set version
+        id: version
+        run: |
+          version="${{ inputs.VERSION_TAG }}"
+          if [ -z "$version" ]; then
+            version=$(grep '^version =' Cargo.toml | awk '{print $3}' | tr -d '"')
+          fi
+          echo "New version is: $version"
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      - name: Delete existing tag and release (only forced releases)
+        uses: dev-drprasad/delete-tag-and-release@v0.2.0
+        if: inputs.BUILD_MODE == 'build and release (force)'
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          delete_release: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: v${{ steps.version.outputs.version }}
+          tag_name: ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: ./dist/*.zip

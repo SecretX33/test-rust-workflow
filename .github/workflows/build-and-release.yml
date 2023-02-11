@@ -3,18 +3,23 @@ name: Build and Release
 on:
   workflow_dispatch:
     inputs:
-      VERSION_TAG:
-        description: 'The version tag of this release'
-        default: 'snapshot'
+      build_mode:
+        description: Build mode
+        default: build and release
+        type: choice
+        options:
+          - build and release
+          - build and release (force)
+          - build only
         required: true
+      version_tag:
+        description: Version tag (e.g. 1.2.5, empty to use the one defined in cargo.toml)
         type: string
-  workflow_call:
-    inputs:
-      VERSION_TAG:
-        description: 'The version tag of this release'
-        default: 'snapshot'
-        required: true
+        required: false
+      release_name:
+        description: Release name (e.g. v1.2.5, empty to generate one automatically)
         type: string
+        required: false
 
 env:
   CARGO_REGISTRY: https://github.com/rust-lang/crates.io-index
@@ -36,25 +41,24 @@ jobs:
           profile: minimal
 
       - name: Build for Windows
-        run: |
-          cargo build --release --target x86_64-pc-windows-msvc
+        run: cargo build --release --target x86_64-pc-windows-msvc
 
       - name: Zip binary
         run: |
-          mkdir -p dist/windows
+          mkdir dist/windows
           echo "=== Release folder contents ==="
           dir target/x86_64-pc-windows-msvc/release
           echo "=== Zipping binary ==="
-          tar.exe -a -c -f target/x86_64-pc-windows-msvc/release/zipsource.zip target/x86_64-pc-windows-msvc/release/zipsource.exe
+          tar.exe -a -c -f target/x86_64-pc-windows-msvc/release/zipsource-x64-windows.zip -C target/x86_64-pc-windows-msvc/release zipsource.exe
 
-      - name: Copy zipped binary
-        run: cp target/x86_64-pc-windows-msvc/release/zipsource.zip dist/windows/
+      - name: Move zipped binary
+        run: mv -v target/x86_64-pc-windows-msvc/release/zipsource-x64-windows.zip dist/ZipSource.x64.Windows.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
           name: ZipSource.x64.Windows.zip
-          path: dist/windows/zipsource.zip
+          path: dist/ZipSource.x64.Windows.zip
           if-no-files-found: error
 
   build_for_linux:
@@ -71,25 +75,24 @@ jobs:
           profile: minimal
 
       - name: Build for Linux
-        run: |
-          cargo build --release --target x86_64-unknown-linux-gnu
+        run: cargo build --release --target x86_64-unknown-linux-gnu
 
       - name: Zip binary
         run: |
-          mkdir -p dist/linux
+          mkdir -v -p dist/linux
           echo "=== Release folder contents ==="
-          ls target/x86_64-unknown-linux-gnu/release
+          ls -la target/x86_64-unknown-linux-gnu/release
           echo "=== Zipping binary ==="
-          zip target/x86_64-unknown-linux-gnu/release/zipsource.zip target/x86_64-unknown-linux-gnu/release/zipsource
+          zip -j target/x86_64-unknown-linux-gnu/release/zipsource-x64-linux.zip target/x86_64-unknown-linux-gnu/release/zipsource
 
-      - name: Copy zipped binary
-        run: cp target/x86_64-unknown-linux-gnu/release/zipsource.zip dist/linux/
+      - name: Move zipped binary
+        run: mv -v target/x86_64-unknown-linux-gnu/release/zipsource-x64-linux.zip dist/ZipSource.x64.Linux.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
           name: ZipSource.x64.Linux.zip
-          path: dist/linux/zipsource.zip
+          path: dist/ZipSource.x64.Linux.zip
           if-no-files-found: error
 
   build_for_macos:
@@ -106,33 +109,36 @@ jobs:
           profile: minimal
 
       - name: Build for MacOS
-        run: |
-          cargo build --release --target x86_64-apple-darwin
+        run: cargo build --release --target x86_64-apple-darwin
 
       - name: Zip binary
         run: |
-          mkdir -p dist/macos
+          mkdir -v -p dist/macos
           echo "=== Release folder contents ==="
-          ls target/x86_64-apple-darwin/release
+          ls -la target/x86_64-apple-darwin/release
           echo "=== Zipping binary ==="
-          zip target/x86_64-apple-darwin/release/zipsource.zip target/x86_64-apple-darwin/release/zipsource
+          zip -j target/x86_64-apple-darwin/release/zipsource-x64-macos.zip target/x86_64-apple-darwin/release/zipsource
 
-      - name: Copy zipped binary
-        run: cp target/x86_64-apple-darwin/release/zipsource.zip dist/macos/
+      - name: Move zipped binary
+        run: mv -v target/x86_64-apple-darwin/release/zipsource-x64-macos.zip dist/ZipSource.x64.MacOS.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
           name: ZipSource.x64.MacOS.zip
-          path: dist/macos/zipsource.zip
+          path: dist/ZipSource.x64.MacOS.zip
           if-no-files-found: error
 
   release:
     runs-on: ubuntu-latest
+    name: Release
     needs:
       - build_for_windows
       - build_for_linux
       - build_for_macos
+    permissions:
+      contents: write
+    if: success() && (inputs.build_mode == 'build and release' || inputs.build_mode == 'build and release (force)')
 
     steps:
       - name: Checkout code
@@ -143,47 +149,61 @@ jobs:
         with:
           path: dist
 
+      - name: Move artifacts
+        run: |
+          mkdir -v -p dist-temp
+          for zip in dist/*/*.zip; do mv -v "$zip" dist-temp/; done
+          rm -r dist
+          mv -v dist-temp dist
+          find dist -type f -empty -print -delete -o -type d -empty -print -delete
+
       - name: List dist folder contents
         run: |
-          echo "=== Dist folder content ==="
-          ls dist
+          echo GitHub ref is: ${{ github.ref }}
+          echo === Current folder ===
+          pwd
+          echo === Root folder contents ===
+          ls -la
+          echo === Dist folder contents ===
+          ls -la dist
 
-      - name: Create Release
-        uses: actions/create-release@v1
+      - name: Set version
+        id: version
+        run: |
+          version="${{ inputs.version_tag }}"
+          if [ -z "$version" ]; then
+            version=$(grep '^version =' Cargo.toml | awk '{print $3}' | tr -d '"')
+          fi
+          echo "New version is: $version"
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      - name: Set release name
+        id: release_name
+        run: |
+          release_name="${{ inputs.release_name }}"
+          if [ -z "$release_name" ]; then
+            release_name=v${{ steps.version.outputs.version }}
+          fi
+          echo "New release_name is: $release_name"
+          echo "release_name=$release_name" >> $GITHUB_OUTPUT
+
+      - name: Delete existing tag and release (only forced releases)
+        uses: dev-drprasad/delete-tag-and-release@v0.2.0
+        if: inputs.build_mode == 'build and release (force)'
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          delete_release: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ inputs.VERSION_TAG }}
-          release_name: v${{ inputs.VERSION_TAG }}
-          draft: false
-          prerelease: false
 
-      - name: Upload Release Asset (Windows)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create release
+        uses: softprops/action-gh-release@v1
         with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./dist
-          asset_name: dist/ZipSource.x64.Windows.zip
-          asset_content_type: application/zip
-
-      - name: Upload Release Asset (Linux)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./dist
-          asset_name: dist/ZipSource.x64.Linux.zip
-          asset_content_type: application/zip
-
-      - name: Upload Release Asset (MacOS)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./dist
-          asset_name: dist/ZipSource.x64.MacOS.zip
-          asset_content_type: application/zip
+          name: ${{ steps.release_name.outputs.release_name }}
+          tag_name: ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            ./dist/ZipSource.x64.Windows.zip
+            ./dist/ZipSource.x64.Linux.zip
+            ./dist/ZipSource.x64.MacOS.zip
