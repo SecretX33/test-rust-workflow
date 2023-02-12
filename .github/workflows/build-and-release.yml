@@ -5,13 +5,13 @@ on:
     inputs:
       build_mode:
         description: Build mode
-        default: build and release
         type: choice
+        required: true
+        default: build and release
         options:
           - build and release
           - build and release (force)
           - build only
-        required: true
       version_tag:
         description: Version tag (e.g. 1.2.5, empty to use the one defined in cargo.toml)
         type: string
@@ -27,115 +27,23 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build_for_windows:
-    runs-on: windows-latest
-    name: Build for Windows
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          profile: minimal
-
-      - name: Build for Windows
-        run: cargo build --release --target x86_64-pc-windows-msvc
-
-      - name: Zip binary
-        run: |
-          mkdir dist/windows
-          echo "=== Release folder contents ==="
-          dir target/x86_64-pc-windows-msvc/release
-          echo "=== Zipping binary ==="
-          tar.exe -a -c -f target/x86_64-pc-windows-msvc/release/zipsource-x64-windows.zip -C target/x86_64-pc-windows-msvc/release zipsource.exe
-
-      - name: Move zipped binary
-        run: mv -v target/x86_64-pc-windows-msvc/release/zipsource-x64-windows.zip dist/ZipSource.x64.Windows.zip
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: ZipSource.x64.Windows.zip
-          path: dist/ZipSource.x64.Windows.zip
-          if-no-files-found: error
-
-  build_for_linux:
-    runs-on: ubuntu-latest
-    name: Build for Linux
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          profile: minimal
-
-      - name: Build for Linux
-        run: cargo build --release --target x86_64-unknown-linux-gnu
-
-      - name: Zip binary
-        run: |
-          mkdir -v -p dist/linux
-          echo "=== Release folder contents ==="
-          ls -la target/x86_64-unknown-linux-gnu/release
-          echo "=== Zipping binary ==="
-          zip -j target/x86_64-unknown-linux-gnu/release/zipsource-x64-linux.zip target/x86_64-unknown-linux-gnu/release/zipsource
-
-      - name: Move zipped binary
-        run: mv -v target/x86_64-unknown-linux-gnu/release/zipsource-x64-linux.zip dist/ZipSource.x64.Linux.zip
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: ZipSource.x64.Linux.zip
-          path: dist/ZipSource.x64.Linux.zip
-          if-no-files-found: error
-
-  build_for_macos:
-    runs-on: macos-latest
-    name: Build for MacOS
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          profile: minimal
-
-      - name: Build for MacOS
-        run: cargo build --release --target x86_64-apple-darwin
-
-      - name: Zip binary
-        run: |
-          mkdir -v -p dist/macos
-          echo "=== Release folder contents ==="
-          ls -la target/x86_64-apple-darwin/release
-          echo "=== Zipping binary ==="
-          zip -j target/x86_64-apple-darwin/release/zipsource-x64-macos.zip target/x86_64-apple-darwin/release/zipsource
-
-      - name: Move zipped binary
-        run: mv -v target/x86_64-apple-darwin/release/zipsource-x64-macos.zip dist/ZipSource.x64.MacOS.zip
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: ZipSource.x64.MacOS.zip
-          path: dist/ZipSource.x64.MacOS.zip
-          if-no-files-found: error
+  build:
+    name: Build
+    strategy:
+      matrix:
+        target_toolchain:
+          - x86_64-pc-windows-msvc
+          - x86_64-unknown-linux-gnu
+          - x86_64-apple-darwin
+    uses: ./.github/workflows/compile-for-os.yml
+    with:
+      target_toolchain: ${{ matrix.target_toolchain }}
+    secrets: inherit
 
   release:
     runs-on: ubuntu-latest
     name: Release
-    needs:
-      - build_for_windows
-      - build_for_linux
-      - build_for_macos
+    needs: build
     permissions:
       contents: write
     if: success() && (inputs.build_mode == 'build and release' || inputs.build_mode == 'build and release (force)')
