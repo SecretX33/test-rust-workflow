@@ -32,6 +32,7 @@ jobs:
     strategy:
       matrix:
         target_toolchain:
+          - i686-pc-windows-msvc
           - x86_64-pc-windows-msvc
           - x86_64-unknown-linux-gnu
           - x86_64-apple-darwin
@@ -112,6 +113,7 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
+            ./dist/ZipSource.x32.Windows.zip
             ./dist/ZipSource.x64.Windows.zip
             ./dist/ZipSource.x64.Linux.zip
             ./dist/ZipSource.x64.MacOS.zip

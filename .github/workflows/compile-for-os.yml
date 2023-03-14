@@ -40,14 +40,14 @@ jobs:
         run: |
           toolchain=$(echo "${{ inputs.target_toolchain }}" | tr '[:upper:]' '[:lower:]')
           echo Toolchain: $toolchain
-          if [ "$toolchain" = "i686-pc-windows-msvc" ] || [ "$toolchain" = "x86_64-pc-windows-msvc" ]; then
+          if [[ "$toolchain" = *-windows-* ]]; then
             os_name=windows
-          elif [ "$toolchain" = "x86_64-unknown-linux-gnu" ]; then
+          elif [[ "$toolchain" = *-linux-* ]]; then
             os_name=linux
-          elif [ "$toolchain" = "x86_64-apple-darwin" ]; then
+          elif [[ "$toolchain" = *-apple-darwin* ]]; then
             os_name=macos
           else 
-            echo Error: toolchain ${{ inputs.target_toolchain }} has no corresponding OS mapped in the build pipeline.
+            echo Error: toolchain '${{ inputs.target_toolchain }}' has no corresponding OS mapped in the build pipeline.
             exit 1
           fi
           echo OS inferred was: $os_name
@@ -94,12 +94,17 @@ jobs:
         run: |
           toolchain=$(echo "${{ inputs.target_toolchain }}" | tr '[:upper:]' '[:lower:]')
           echo Toolchain: $toolchain
-          if [ "$toolchain" = "i686-pc-windows-msvc" ]; then
-            architecture_bits=32
+          if [[ "$toolchain" == i686-* ]]; then
+            architecture_bits=x32
+          elif [[ "$toolchain" == x86_64-* ]]; then
+            architecture_bits=x64
+          elif [[ "$toolchain" == aarch64-* ]]; then
+            architecture_bits=Arm64
           else
-            architecture_bits=64
+            echo Error: toolchain '${{ inputs.target_toolchain }}' has no architecture mapped in the build pipeline.
+            exit 1
           fi
-          echo Bits inferred was: $architecture_bits bits
+          echo Architecture inferred was: $architecture_bits
           echo "architecture_bits=$architecture_bits" >> $GITHUB_OUTPUT
   
   build_variables:
@@ -114,7 +119,7 @@ jobs:
       - name: Generate final binary name
         id: binary_name
         run: |
-          binary_name=$(echo ZipSource.x${{ needs.os_info.outputs.architecture_bits }}.${{ needs.os_info.outputs.os_name_pretty }}.zip) 
+          binary_name=$(echo ZipSource.${{ needs.os_info.outputs.architecture_bits }}.${{ needs.os_info.outputs.os_name_pretty }}.zip) 
           echo Binary name: $binary_name
           echo "binary_name=$binary_name" >> $GITHUB_OUTPUT
       
@@ -140,6 +145,9 @@ jobs:
         with:
           toolchain: stable
           profile: minimal
+
+      - name: Install Rust toolchain and dependencies
+        run: rustup target add ${{ inputs.target_toolchain }}
 
       - name: Build for ${{ needs.os_info.outputs.os_name_pretty }}
         run: cargo build --release --target ${{ inputs.target_toolchain }}
